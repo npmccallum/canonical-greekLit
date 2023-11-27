@@ -1,0 +1,44 @@
+name: mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+  - cron: '0 0 * * 0'
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+    - name: 🪞  mirror parent repository
+      run: |
+        PARENT=$(gh repo view $GITHUB_REPOSITORY --json parent -q '.parent | "\(.owner.login)/\(.name)"')
+        git clone --mirror $GITHUB_SERVER_URL/$PARENT parent
+        cd parent
+        git for-each-ref --format 'delete %(refname)' refs/pull | git update-ref --stdin
+    - name: 🔁  rebase child repository
+      run: |
+        BASE=$(echo $GITHUB_SERVER_URL | sed -e "s|://|://$GITHUB_ACTOR:$GITHUB_TOKEN@|g")
+        git clone parent child
+        cd child
+        git remote add fork $BASE/$GITHUB_REPOSITORY
+        git fetch fork
+        git checkout -b mirror fork/$GITHUB_REF_NAME
+        GIT_COMMITTER_NAME=Nobody GIT_COMMITTER_EMAIL=nobody@test.com git -c rebase.instructionFormat='%s%nexec GIT_COMMITTER_DATE="%cD" GIT_COMMITTER_NAME="%cn" GIT_COMMITTER_EMAIL="%ce" git commit --amend --no-edit' rebase $GITHUB_REF_NAME
+        git checkout $GITHUB_REF_NAME
+        git merge --ff-only mirror
+        git branch -D mirror
+        git push origin $GITHUB_REF_NAME
+        cd ..
+        rm -rf child
+    - name: ⬆️  push mirror
+      env:
+        GITHUB_TOKEN: ${{ secrets.METATRON }}
+      run: |
+        BASE=$(echo $GITHUB_SERVER_URL | sed -e "s|://|://$GITHUB_ACTOR:$GITHUB_TOKEN@|g")
+        cd parent
+        git push -f --mirror $BASE/$GITHUB_REPOSITORY
